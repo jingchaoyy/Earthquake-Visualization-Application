@@ -1,0 +1,465 @@
+<html>
+
+<head>
+    <meta name="description" content="Leaflet + geojson - homicides example Cartodb version">
+
+    <!-- Leaflet as usual -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/leaflet.js"></script>
+
+    <!-- Markerclusters -->
+    <script src='https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.0.0/leaflet.markercluster.js'></script>
+    <link href='https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.0.0/MarkerCluster.css' rel='stylesheet' />
+    <link href='https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.0.0/MarkerCluster.Default.css' rel='stylesheet' />
+
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-1.10.2.min.js"></script>
+
+    <!-- the L.Control.BoxZoom code -->
+    <script src="https://dl.dropboxusercontent.com/s/lxsizgzo8mlkvdo/leaflet-control-boxzoom.js"></script>
+    <link rel="stylesheet" href="https://dl.dropboxusercontent.com/s/s28mlasyvwz4pvh/leaflet-control-boxzoom.css" />
+
+    <!-- This example requires d3 for AJAX and the brush,
+     though you can bring your own library. -->
+    <script src="https://d3js.org/d3.v4.min.js"></script>
+    <!-- Heatmap. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+        
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+        
+        .ui-brush {
+            background: #f8f8f8;
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            left: 0;
+            height: 100px;
+        }
+        
+        .axis--grid .domain {
+            fill: #ddd;
+            stroke: none;
+        }
+        
+        .axis--x .domain,
+        .axis--grid .tick line {
+            stroke: #fff;
+        }
+        
+        .axis--grid .tick--minor line {
+            stroke-opacity: .5;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map" style="width: 100%; height: 100%"></div>
+    <div id='brush' class='ui-brush'></div>
+    <script>
+        // CONSTRUCT THE MAP
+        var geojsonlayer;
+        var map = L.map('map', {
+            center: [36.783912, -119.402656], //California
+            //center: [lati, longi], //NYC
+            zoom: 5
+        });
+
+
+        // add baselayer to map
+        var Esri_WorldTerrain = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: USGS, Esri, TANA, DeLorme, and NPS',
+            maxZoom: 13
+        });
+
+
+        var Imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+          
+        }).addTo(map);
+
+        L.Control.boxzoom({
+            position: 'topleft'
+        }).addTo(map);
+
+        //FEATUREGroup that collects all GeoJSON objects
+        var volcanoGoup = new L.featureGroup();
+        var tsunamiGoup = new L.featureGroup();
+        //var earthquakeGoup = new L.featureGroup();
+        var group = new L.featureGroup().addTo(map);
+        var earthquakeGoup = new L.featureGroup().addTo(map);
+        var landmark = new L.featureGroup();
+
+        console.log("Loading data...");
+
+        function getColor(eq_mag_mw) {
+            return eq_mag_mw > 8 ? '#7f0000' :
+                eq_mag_mw > 7 ? '#d7301f' :
+                eq_mag_mw > 6 ? '#d7301f' :
+                eq_mag_mw > 5 ? '#ef6548' :
+                eq_mag_mw > 4 ? '#fc8d59' :
+                eq_mag_mw > 3 ? '#fdbb84' : //red
+                eq_mag_mw > 2 ? '#fdd49e' :
+                eq_mag_mw > 1 ? '#fee8c8' :
+                eq_mag_mw > 0 ? '#fff7ec' : //yellow
+                '#ffffb2';
+        }
+
+        // styles
+        function style(feature) {
+            var color = getColor(feature.properties.eq_mag_mw);
+            console.log(feature.properties.eq_mag_mw + " - " + color);
+            return {
+                color: color,
+            };
+        }
+
+        var geojsonMarkerOptions = {
+            radius: 8,
+            color: "#0066ff",
+            weight: 0,
+            fillOpacity: 0.5
+        };
+
+        var MyIcon = L.Icon.extend({
+            options: {
+                iconSize: [15, 15],
+                iconAnchor: [16, 37],
+                popupAnchor: [-3, -76]
+            }
+        });
+
+        var volcanoIcon = new MyIcon({
+            iconUrl: 'https://dl.dropboxusercontent.com/s/e0oxypqfofsfvx1/volcano.png'
+        });
+        var tsunamiIcon = new MyIcon({
+            iconUrl: 'https://dl.dropboxusercontent.com/s/trl13lnj8oddyw5/tsunami.png'
+        });
+        var earthquakeIcon = new MyIcon({
+            iconUrl: 'https://dl.dropboxusercontent.com/s/44w1ouxwp747t6o/earthquake.png'
+        });
+        var canyonIcon = new MyIcon({
+            iconUrl: 'https://dl.dropboxusercontent.com/s/43ubqxlh9ull090/canyon.png'
+        });
+        var homeIcon = new MyIcon({
+            iconUrl: 'https://dl.dropboxusercontent.com/s/310i5zvyl0148sp/homePin.png'
+        });
+
+
+
+        // CALL THE CARTODB SQL API HERE IN URL FORMAT
+        var volcano = "https://jingchaoyy.carto.com/api/v2/sql?format=GeoJSON&q=SELECT * FROM volcano_eruptions WHERE year>=1900";
+        console.log("Query: " + volcano);
+        $.getJSON(volcano, function(cartodbdata) {
+            var volcanolayer = L.geoJson(cartodbdata, {
+                // add popup with info to each geosjon feature
+                onEachFeature: function(feature, layer) {
+                    layer.bindPopup("<h2>" + feature.properties.year + "-" + feature.properties.month + "-" + feature.properties.day + "   " + feature.properties.hour + ":" + feature.properties.minute + "</br>" + feature.properties.name + "</h2>");
+                },
+                //style the point marker
+                pointToLayer: function(feature, latlng) {
+                    return L.marker(latlng, {
+                        icon: volcanoIcon
+                    });
+                }
+            }).addTo(volcanoGoup);
+
+            //map.fitBounds(volcanoGoup.getBounds()); // zooms to fit data
+        });
+
+        var tsunami = "https://jingchaoyy.carto.com/api/v2/sql?format=GeoJSON&q=SELECT * FROM tsunami WHERE year>=1900";
+        console.log("Query: " + tsunami);
+        $.getJSON(tsunami, function(cartodbdata) {
+            var tsunamilayer = L.geoJson(cartodbdata, {
+                // add popup with info to each geosjon feature
+                onEachFeature: function(feature, layer) {
+                    layer.bindPopup("<h2>" + feature.properties.year + "-" + feature.properties.month + "-" + feature.properties.day + "   " + feature.properties.hour + ":" + feature.properties.minute + "</br>" + feature.properties.location_name + "</h2>");
+                },
+                //style the point marker
+                pointToLayer: function(feature, latlng) {
+                    return L.marker(latlng, {
+                        icon: tsunamiIcon
+                    });
+                }
+            }).addTo(tsunamiGoup);
+
+            //map.fitBounds(tsunamiGoup.getBounds()); // zooms to fit data
+        });
+
+        var earthquake = "https://jingchaoyy.carto.com/api/v2/sql?format=GeoJSON&q=SELECT * FROM earthquake_fixed1900";
+        console.log("Query: " + earthquake);
+        $.getJSON(earthquake, function(cartodbdata) {
+            geojsonlayer = L.geoJson(cartodbdata, {
+                // add popup with info to each geosjon feature
+                onEachFeature: function(feature, layer) {
+                    layer.bindPopup("<h2>" + feature.properties.year + "-" + feature.properties.month + "-" + feature.properties.day + "   " + feature.properties.hour + ":" + feature.properties.minute + "</br>" + feature.properties.location_name + "</br>" + "Damage Level: " + feature.properties.damage_description + "</br>" + "Magnitude: " + feature.properties.eq_mag_mw + "</h2>");
+                },
+                //style the point marker
+                style: style,
+                pointToLayer: function(feature, latlng) {
+                    return L.circleMarker(latlng, geojsonMarkerOptions);
+                }
+            }).addTo(earthquakeGoup);
+
+            //map.fitBounds(earthquakeGoup.getBounds()); // zooms to fit data
+        });
+
+        var myControl = L.Control.extend({
+            options: {
+                position: 'bottomleft'
+            },
+            onAdd: function(map) {
+                this._div = L.DomUtil.create('div', 'myControl');
+                this._div.innerHTML = '<h1 id="title" style="color:red">Input</h1>' +
+                    '<input type="text" id="myTextField" value="Magnitude/Coordinate" />' +
+                    '<input type="submit" id="searchBtn" value="Search" onclick="change()"/>' +
+                    '<input type="submit" id="addBtn" value="Add" onclick="addMarker()"/>'
+                L.DomEvent.disableClickPropagation(this._div);
+                return this._div;
+            }
+        });
+
+        map.addControl(new myControl());
+
+        //-----------------------------------------------
+        // FUNCTIONS FOR HANDLING SEARCH FIELD
+        //-----------------------------------------------
+
+        // button functionality - get value from textfield and change layer
+        var querystem = "https://jingchaoyy.carto.com/api/v2/sql?format=GeoJSON&q=SELECT * FROM earthquake_fixed1900 WHERE eq_mag_mw > ";
+        var search = "9";
+        var query = querystem + search;
+
+        function change() {
+            debugger;
+            search = document.getElementById('myTextField').value;
+            if (search.length == 0) {
+                alert('Nothing to search for...');
+                return;
+            }
+            // updating the layer means deleting the old one and
+            // adding a new one
+            group.removeLayer(geojsonlayer);
+
+            query = querystem + search;
+            console.log("Changed query: " + query);
+
+            $.getJSON(query, function(data) {
+                geojsonlayer = L.geoJson(data, {
+                    onEachFeature: function(feature, layer) {
+                        // ADD A POPUP WITH SOME INFO
+                        layer.bindPopup("<h2>" + feature.properties.year + "-" + feature.properties.month + "-" + feature.properties.day + "   " + feature.properties.hour + ":" + feature.properties.minute + "</br>" + feature.properties.location_name + "</br>" + "Damage Level: " + feature.properties.damage_description + "</br>" + "Magnitude: " + feature.properties.eq_mag_mw + "</h2>");
+                    },
+                    pointToLayer: function(feature, latlng) {
+                        return L.marker(latlng, {
+                            icon: earthquakeIcon
+                        });
+                    }
+
+                }).addTo(group);
+            });
+
+            var title = document.getElementById('title');
+            title.innerHTML = "Magnitude > " + search;
+            map.fitBounds(group.getBounds());
+        }
+
+        function addMarker() {
+            //var lati = document.getElementById('latiText').value;
+            //var longi = document.getElementById('longiText').value;
+            //map.removeLayer(landmark);
+            L.marker([document.getElementById('myTextField').value.split(",")[0], document.getElementById('myTextField').value.split(",")[1]], {
+                icon: homeIcon
+            }).addTo(landmark);
+          
+            var title = document.getElementById('title');
+            title.innerHTML = "Add Marker";
+            map.fitBounds(landmark.getBounds());
+
+        }
+
+
+        // Functions to either disable (onmouseover) or enable (onmouseout) the map's dragging
+        function controlEnter(e) {
+            map.dragging.disable();
+        }
+
+        function controlLeave() {
+            map.dragging.enable();
+        }
+        //Quick application to all input tags
+        var inputTags = document.getElementsByTagName("input")
+        for (var i = 0; i < inputTags.length; i++) {
+            inputTags[i].onmouseover = controlEnter;
+            inputTags[i].onmouseout = controlLeave;
+        }
+
+
+        var heat; //heatmap, global variable
+
+        // Get data from Cartodb
+        function loadData() {
+
+            // constructing the query
+            var querystem = "https://jingchaoyy.carto.com/api/v2/sql?format=GeoJSON&q=SELECT * FROM earthquake_fixed1900";
+            var query = querystem;
+            console.log("query: " + query);
+
+            $.getJSON(query, function(data) {
+                parse(data);
+                locations = data.features.map(function(feature) {
+                    return [feature.geometry.coordinates[1], feature.geometry.coordinates[0]];
+                });
+                heat = L.heatLayer(locations);
+                setBrush(data);
+            });
+        }
+
+        function parse(data) {
+            // wrangle data into format Leaflet.timeline expects
+            // earthquake data only has a time, so we'll use that as a "start"
+            // and the "end" will be that + some value based on magnitude
+            data.features.forEach(function(item) {
+                var date = new Date(item.properties.year, 0, 0);
+                item.properties.year = date; //date.getTime();
+                //console.log("time: " + item.properties.year);
+            });
+        }
+
+        function setBrush(data) {
+
+            var container = d3.select("#brush");
+
+            var margin = {
+                    top: 10,
+                    right: 0,
+                    bottom: 20,
+                    left: 0
+                },
+                width = container.node().offsetWidth,
+                height = 80 - margin.top - margin.bottom;
+
+            var x = d3.scaleTime()
+                .domain(d3.extent(data.features, function(d) {
+                    return d.properties.year;
+                }))
+                .rangeRound([0, width]);
+
+            var svg = container.append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+            svg.append("g") // https://github.com/d3/d3-time-format
+                .attr("class", "axis axis--grid")
+                .attr("transform", "translate(0," + height + ")")
+                .call(d3.axisBottom(x)
+                    .ticks(d3.timeYear, 1)
+                    /*
+                    time-scale - https://github.com/d3/d3-scale#time-scales
+                    time-format - https://github.com/d3/d3-time-format
+                    d3.timeSecond(date)
+                    d3.timeMinute(date)
+                    d3.timeHour(date)
+                    d3.timeDay(date)
+                    d3.timeMonth(date)
+                    d3.timeWeek(date)
+                    d3.timeYear(date)
+                    */
+                    .tickSize(-height)
+                    .tickFormat(function() {
+                        return null;
+                    }))
+                .selectAll(".tick")
+                .classed("tick--minor", function(d) {
+                    return d.getFullYear();
+                });
+            /*
+            getDate()	Returns the day of the month (from 1-31)
+            getDay()	Returns the day of the week (from 0-6)
+            getFullYear()	Returns the year
+            getHours()	Returns the hour (from 0-23)
+            getMilliseconds()	Returns the milliseconds (from 0-999)
+            getMinutes()	Returns the minutes (from 0-59)
+            getMonth()	Returns the month (from 0-11)
+            getSeconds()	Returns the seconds (from 0-59)
+            getTime()	Returns the number of milliseconds since midnight Jan 1 1970, and a specified date
+            */
+            svg.append("g")
+                .attr("class", "axis axis--x")
+                .attr("transform", "translate(0," + height + ")")
+                .call(d3.axisBottom(x)
+                    .ticks(d3.year)
+                    .tickPadding(0))
+                .attr("text-anchor", null)
+                .selectAll("text")
+                .attr("x", 6);
+
+            var brush = d3.brushX()
+                .extent([
+                    [0, 0],
+                    [width, height]
+                ])
+                .on("brush end", brushend);
+
+            svg.append("g")
+                .attr("class", "brush")
+                .call(brush);
+
+            function brushend() {
+                var s = d3.event.selection;
+                var filter;
+                // If the user has selected no brush area, share everything.
+                if (s == null) {
+                    filter = function() {
+                        return true;
+                    }
+                } else {
+                    var d0 = s.map(x.invert);
+                    // Otherwise, restrict features to only things in the brush extent.
+                    filter = function(feature) {
+                        return feature.properties.year > +d0[0] &&
+                            feature.properties.year < (+d0[1]);
+                    };
+                }
+
+                var data_filtered = data.features.filter(filter);
+                map.removeLayer(heat);
+                locations = data_filtered.map(function(feature) {
+                    return [feature.geometry.coordinates[1], feature.geometry.coordinates[0], 50];
+                });
+                heat = L.heatLayer(locations).addTo(map);
+            }
+        }
+        loadData();
+
+        console.log("Done!");
+
+
+        var baseMaps = {
+            "World Terrain": Esri_WorldTerrain,
+            "World Imagery": Imagery
+        };
+
+        var overlayMaps = {
+            "Vocano Eruptions": volcanoGoup,
+            "Tsunami Event": tsunamiGoup,
+            "Earthquake": earthquakeGoup,
+            "Landmarks": landmark
+        };
+        L.control.layers(baseMaps, overlayMaps).addTo(map);
+    </script>
+</body>
+
+</html>
